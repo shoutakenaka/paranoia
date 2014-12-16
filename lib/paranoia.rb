@@ -114,9 +114,9 @@ module Paranoia
     # Let's not touch it if it's frozen.
     unless self.frozen?
       if with_transaction
-        with_transaction_returning_status { touch(paranoia_column) }
+        with_transaction_returning_status { set_current_time(paranoia_column) }
       else
-        touch(paranoia_column)
+        set_current_time(paranoia_column)
       end
     end
   end
@@ -224,6 +224,36 @@ class ActiveRecord::Base
 
   def paranoia_sentinel_value
     self.class.paranoia_sentinel_value
+  end
+
+  def set_current_time(name = nil)
+    return if no_touching?
+
+    raise ActiveRecordError, "cannot touch on a new record object" unless persisted?
+
+    attributes = timestamp_attributes_for_update_in_model
+    attributes << name if name
+
+    unless attributes.empty?
+      current_time = Time.now.to_i
+      changes = {}
+
+      attributes.each do |column|
+        column = column.to_s
+        changes[column] = write_attribute(column, current_time)
+      end
+
+      changes[self.class.locking_column] = increment_lock if locking_enabled?
+
+      changed_attributes.except!(*changes.keys)
+      primary_key = self.class.primary_key
+
+      with_transaction_returning_status do
+        self.class.unscoped.where(primary_key => self[primary_key]).update_all(changes) == 1
+      end
+    else
+      true
+    end
   end
 end
 
